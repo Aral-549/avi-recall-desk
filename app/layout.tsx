@@ -1,12 +1,9 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { Cabin_Sketch, Chakra_Petch, Cutive_Mono, Figtree, Gochi_Hand, Reenie_Beanie, Unbounded } from 'next/font/google'
+import { Cabin_Sketch, Cutive_Mono, Figtree, Reenie_Beanie } from 'next/font/google'
 import './globals.css'
 
 const interfaceFont = Figtree({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-interface' })
-const displayFont = Unbounded({ subsets: ['latin'], weight: ['400', '500', '700'], variable: '--font-display' })
-const labelFont = Chakra_Petch({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-label' })
-const handFont = Gochi_Hand({ subsets: ['latin'], weight: '400', variable: '--font-hand' })
 const sketchDisplayFont = Cabin_Sketch({ subsets: ['latin'], weight: ['400', '700'], variable: '--font-sketch' })
 const pencilFont = Reenie_Beanie({ subsets: ['latin'], weight: '400', variable: '--font-pencil' })
 const typewriterFont = Cutive_Mono({ subsets: ['latin'], weight: '400', variable: '--font-typewriter' })
@@ -47,7 +44,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${interfaceFont.variable} ${displayFont.variable} ${labelFont.variable} ${handFont.variable} ${sketchDisplayFont.variable} ${pencilFont.variable} ${typewriterFont.variable}`}>
+    <html lang="en" className={`${interfaceFont.variable} ${sketchDisplayFont.variable} ${pencilFont.variable} ${typewriterFont.variable}`}>
       <body className="antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}

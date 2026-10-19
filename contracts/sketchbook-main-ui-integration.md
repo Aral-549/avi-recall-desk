@@ -50,11 +50,12 @@ Make the supplied `avi_recall_desk.tsx` sketchbook interface AVI's primary front
 - Exposing AWS credentials or the categoriser HTTP token to the browser.
 
 ## Design brief
-1. AVI is a personal archive of saved fragments; help a maker capture, review, and retrieve a study.
-2. The one move is the sketchbook desk: imperfect pencil frames and paper scraps make archive items feel handled and revisitable.
-3. Show real AVI records and their saved context; label seed content as illustrative.
-4. Use graphite and warm paper as materials; reserve the existing yellow/green signal palette for selection and pending review.
-5. Use the supplied sketchbook typography where available, while retaining readable interface text and accessible focus states.
+1. Match the supplied `avi_recall_desk.tsx` visual composition: textured grey graphite paper, hand-drawn square frames, taped study cards, and the oversized architectural AVI wordmark.
+2. Keep its top bar with the room selector, `studies & pad` / `triage` / `index` / `ask avi` navigation, and tools menu; do not substitute a permanent project sidebar.
+3. The Desk view begins with the large sketched AVI hero beside an inline multi-modal capture pad, then shows real archive items as a three-column Studies grid.
+4. Keep the source's sketch, illustration, hand annotation, and type specimen treatments: Cabin Sketch display, Reenie Beanie notes, Cutive Mono labels, and Figtree interface text.
+5. Keep the original four view compositions (Desk, Review, Library, Ask) while connecting their actions to the existing AVI store; seed records remain visibly illustrative.
+6. Use the source's pencil-grey palette (#ecebe7 paper, #2c2c2f graphite, #424246 lead) and minimal interaction tint; do not introduce kraft paper, orange accents, or a highlighter-yellow desk treatment.
 
 ## Status
 - [x] Drafted
