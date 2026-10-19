@@ -70,7 +70,16 @@ export function buildSeed(): AppData {
     );
     const colId = s.col === null ? null : SEED_COLLECTIONS[s.col].id;
     const fields = { ...sug.fields };
-    fields.collection = { ...fields.collection, value: colId, confidence: colId ? Math.max(fields.collection.confidence ?? 0.5, 0.62) : 0.35 };
+    const prevCol = fields.collection;
+    fields.collection = {
+      value: colId,
+      state: "suggested",
+      by: "model",
+      model: "mock-categoriser-v1",
+      at: new Date(created.getTime() + 2000).toISOString(),
+      ...prevCol,
+      confidence: colId ? Math.max(prevCol?.confidence ?? 0.5, 0.62) : 0.35,
+    };
     if (s.confirmed) {
       for (const k of Object.keys(fields) as (keyof typeof fields)[]) {
         (fields as Record<string, Field<unknown>>)[k] = { ...fields[k], state: "confirmed" };

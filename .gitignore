@@ -18,6 +18,7 @@ node_modules
 .next/
 .DS_Store
 *.db
+*.db-*
 *.sqlite
 *.sqlite3
 *.tsbuildinfo
