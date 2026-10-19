@@ -1,0 +1,12 @@
+{
+  "url": "https://example.com/articles/vector-search-basics",
+  "result": {
+    "status": "ok",
+    "title": "Vector search basics",
+    "description": "A short primer on embeddings and nearest-neighbour search.",
+    "text": "Embeddings map text to points in a vector space.\nNearest-neighbour search finds the closest points to a query.",
+    "language": "en",
+    "publishedAt": "2026-03-02T09:00:00+00:00",
+    "bytes": 2048
+  }
+}

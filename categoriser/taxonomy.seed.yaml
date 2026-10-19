@@ -1,0 +1,41 @@
+version: 1
+tags:
+  - id: cybersecurity
+    label: Cybersecurity
+    synonyms: [security, infosec, appsec, ctf, pentest, pentesting, vulnerability, exploit, cve, malware]
+  - id: open-source
+    label: Open Source
+    synonyms: [oss, foss, opensource]
+  - id: web-dev
+    label: Web Development
+    synonyms: [webdev, web-development, frontend, backend, fullstack, full-stack, nextjs, next-js, react, javascript, typescript, css, html]
+  - id: ai-ml
+    label: AI / ML
+    synonyms: [ai, ml, artificial-intelligence, machine-learning, llm, llms, deep-learning, neural-network, gpt, transformers, agents]
+  - id: design-ui
+    label: Design / UI
+    synonyms: [design, ui, ux, ui-ux, figma, typography, interface]
+  - id: hackathon
+    label: Hackathon
+    synonyms: [hack, hackathons, devpost, mlh]
+  - id: chess
+    label: Chess
+    synonyms: [lichess, chesscom, chess-com, opening, endgame]
+  - id: tutorial
+    label: Tutorial
+    synonyms: [guide, howto, how-to, walkthrough, course, lesson, learn]
+  - id: tool-library
+    label: Tool / Library
+    synonyms: [tool, tools, library, libraries, package, sdk, cli, framework, utility]
+  - id: docs-reference
+    label: Docs / Reference
+    synonyms: [docs, documentation, reference, api-docs, spec, specification, manual, cheatsheet]
+  - id: inspiration
+    label: Inspiration
+    synonyms: [inspo, showcase, portfolio, gallery, awesome]
+  - id: article
+    label: Article
+    synonyms: [blog, blog-post, post, essay, writeup, write-up, news, paper]
+  - id: career-study
+    label: Career / Study
+    synonyms: [career, job, jobs, interview, interviews, study, exam, resume, cv, internship]
