@@ -49,5 +49,5 @@ Provide a persistent local SQLite database seeded with initial sample items and 
 ## Status
 - [x] Drafted
 - [ ] Reviewed by a human
-- [ ] Implementation matches this contract
+- [x] Implementation matches this contract
 - [ ] Golden tests exist for every behavior case above

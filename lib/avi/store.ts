@@ -7,6 +7,7 @@
  */
 import { create } from "zustand";
 import { categoriser, CategoriseError, titleFromUrl } from "./categoriser";
+import { mapBackendFields, submitToCategoriser, syncReview } from "./backend";
 import { getDataStore, StorageError } from "./datastore";
 import { draftIdeas, isLongAsk, jobStage, planFor, quickReply } from "./idea-lab";
 import { freeSpot, layoutPage, sizeOf, type Rect } from "./layout";
@@ -229,7 +230,7 @@ export const useAvi = create<State>()((set, get) => {
 
     async hydrate() {
       if (get().hydrated) return;
-      const { data, warnings } = await store().load();
+      const { data, warnings = [] } = await store().load();
       let next = data ?? buildSeed();
       // Soft-deleted items can't be undone after a reload, so purge them and their files.
       const purged: string[] = [];
@@ -248,7 +249,7 @@ export const useAvi = create<State>()((set, get) => {
       for (const w of warnings) get().toast({ message: w, tone: "error", ttl: 12000 });
       for (const it of liveItems(next)) if (it.status === "pending") void get().process(it.id);
 
-      store().subscribe(async () => {
+      store().subscribe?.(async () => {
         const { data: ext } = await store().load();
         if (!ext) return;
         applyingExternal = true;
@@ -349,19 +350,45 @@ export const useAvi = create<State>()((set, get) => {
         tags: [...new Set(liveItems(d).filter((i) => i.fields.collection?.value === c.id && i.fields.tags?.state === "confirmed").flatMap((i) => i.fields.tags!.value))] as TagId[],
       }));
       try {
-        const sug = await categoriser.categorise(
-          { id, url: it.url, rawContent: it.rawContent, whyISavedThis: it.whyISavedThis, attachment: it.attachment, collections },
-          { signal: ctrl.signal },
-        );
+        let suggestedFields: Partial<ItemFields>;
+        let suggestedTitle: string | undefined;
+        if (it.origin === "capture" || it.origin === "idea-lab") {
+          const collectionName = it.fields.collection?.value
+            ? d.collections.find((c) => c.id === it.fields.collection?.value)?.name
+            : undefined;
+          const blob = it.attachment ? await store().getBlob(it.attachment.blobId) : undefined;
+          const view = await submitToCategoriser(it, collectionName, blob);
+          suggestedFields = mapBackendFields(view, d.collections) as Partial<ItemFields>;
+          suggestedTitle = view.item.title ?? view.extraction?.title;
+        } else {
+          const sug = await categoriser.categorise(
+            {
+              id,
+              url: it.url,
+              title: it.title,
+              rawContent: [it.rawContent, it.whyISavedThis].filter(Boolean).join("\n\n"),
+              ...(it.attachment ? { attachment: { name: it.attachment.name, mime: it.attachment.mime } } : {}),
+            },
+            {
+              collections: collections.map(({ collection, tags }) => ({
+                id: collection.id,
+                name: collection.name,
+                tags: Object.fromEntries(tags.map((tag) => [tag, 1])),
+              })),
+            },
+          );
+          suggestedFields = sug.fields;
+          suggestedTitle = sug.title;
+        }
         const cur = get().data.items[id];
         if (!cur || cur.deletedAt) return;
         const fields: Partial<ItemFields> = { ...cur.fields };
         for (const name of FIELD_NAMES) {
           // AI never overwrites a person's decision.
           if (cur.fields[name]?.state === "confirmed") continue;
-          (fields as Record<string, unknown>)[name] = sug.fields[name];
+          (fields as Record<string, unknown>)[name] = suggestedFields[name];
         }
-        mark({ fields, title: cur.title ?? sug.title, status: "ready", updatedAt: nowIso() });
+        mark({ fields, title: cur.title ?? suggestedTitle, status: "ready", updatedAt: nowIso() });
         if (cur.origin === "capture" || cur.origin === "idea-lab") set((s) => ({ justCleaned: { ...s.justCleaned, [id]: true } }));
       } catch (e) {
         if (ctrl.signal.aborted) return;
@@ -382,47 +409,91 @@ export const useAvi = create<State>()((set, get) => {
     },
 
     acceptField(id, name) {
-      const items = mapItems([id], (it) => {
-        const f = it.fields[name];
-        if (!f || f.state === "confirmed") return null;
-        return { ...it, fields: { ...it.fields, [name]: { ...f, state: "confirmed" } } };
-      });
-      if (Object.keys(items).length) commit("Accepted " + labelFor(name), { items });
+      const target = get().data.items[id];
+      const apply = () => {
+        const items = mapItems([id], (it) => {
+          const f = it.fields[name];
+          if (!f || f.state === "confirmed") return null;
+          return { ...it, fields: { ...it.fields, [name]: { ...f, state: "confirmed", by: "user" } } };
+        });
+        if (Object.keys(items).length) commit("Accepted " + labelFor(name), { items });
+      };
+      if (target && (target.origin === "capture" || target.origin === "idea-lab") && target.fields[name]?.state === "suggested") {
+        void syncReview(id, name, "confirm").then(apply).catch((error: unknown) => {
+          get().toast({ message: error instanceof Error ? `Couldn't sync this decision: ${error.message}` : "Couldn't sync this decision.", tone: "error" });
+        });
+        return;
+      }
+      apply();
     },
 
     rejectField(id, name) {
       if (!REJECTABLE_FIELDS.includes(name)) return;
-      const items = mapItems([id], (it) => ({ ...it, fields: { ...it.fields, [name]: userField(REJECTED_VALUE[name]) } }));
-      commit("Rejected " + labelFor(name), { items });
+      const target = get().data.items[id];
+      const apply = () => {
+        const items = mapItems([id], (it) => ({ ...it, fields: { ...it.fields, [name]: userField(REJECTED_VALUE[name]) } }));
+        commit("Rejected " + labelFor(name), { items });
+      };
+      if (target && (target.origin === "capture" || target.origin === "idea-lab") && target.fields[name]?.state === "suggested") {
+        void syncReview(id, name, "reject").then(apply).catch((error: unknown) => {
+          get().toast({ message: error instanceof Error ? `Couldn't sync this decision: ${error.message}` : "Couldn't sync this decision.", tone: "error" });
+        });
+        return;
+      }
+      apply();
     },
 
     acceptItems(ids) {
-      const items = mapItems(ids, (it) => {
-        if (!hasSuggestions(it)) return null;
-        const fields = { ...it.fields };
-        for (const n of FIELD_NAMES) {
-          const f = fields[n];
-          if (f?.state === "suggested") (fields as Record<string, unknown>)[n] = { ...f, state: "confirmed" };
-        }
-        return { ...it, fields };
+      const apply = () => {
+        const items = mapItems(ids, (it) => {
+          if (!hasSuggestions(it)) return null;
+          const fields = { ...it.fields };
+          for (const n of FIELD_NAMES) {
+            const f = fields[n];
+            if (f?.state === "suggested") (fields as Record<string, unknown>)[n] = { ...f, state: "confirmed", by: "user" };
+          }
+          return { ...it, fields };
+        });
+        const n = Object.keys(items).length;
+        if (n) commit(n === 1 ? "Accepted the suggestions" : `Accepted ${n} scraps`, { items });
+      };
+      const remote = ids.flatMap((id) => {
+        const it = get().data.items[id];
+        if (!it || (it.origin !== "capture" && it.origin !== "idea-lab")) return [];
+        return FIELD_NAMES.filter((name) => it.fields[name]?.state === "suggested").map((name) => [id, name] as const);
       });
-      const n = Object.keys(items).length;
-      if (n) commit(n === 1 ? "Accepted the suggestions" : `Accepted ${n} scraps`, { items });
+      if (remote.length) {
+        void Promise.all(remote.map(([id, name]) => syncReview(id, name, "confirm"))).then(apply).catch((error: unknown) => {
+          get().toast({ message: error instanceof Error ? `Couldn't sync these decisions: ${error.message}` : "Couldn't sync these decisions.", tone: "error" });
+        });
+      } else apply();
     },
 
     rejectItems(ids) {
-      const items = mapItems(ids, (it) => {
-        if (!hasSuggestions(it)) return null;
-        const fields = { ...it.fields };
-        for (const n of FIELD_NAMES) {
-          const f = fields[n];
-          if (f?.state !== "suggested") continue;
-          (fields as Record<string, unknown>)[n] = REJECTABLE_FIELDS.includes(n) ? userField(REJECTED_VALUE[n]) : { ...f, state: "confirmed" };
-        }
-        return { ...it, fields };
+      const apply = () => {
+        const items = mapItems(ids, (it) => {
+          if (!hasSuggestions(it)) return null;
+          const fields = { ...it.fields };
+          for (const n of FIELD_NAMES) {
+            const f = fields[n];
+            if (f?.state !== "suggested") continue;
+            (fields as Record<string, unknown>)[n] = REJECTABLE_FIELDS.includes(n) ? userField(REJECTED_VALUE[n]) : { ...f, state: "confirmed", by: "user" };
+          }
+          return { ...it, fields };
+        });
+        const n = Object.keys(items).length;
+        if (n) commit(n === 1 ? "Rejected the suggestions" : `Rejected ${n} scraps`, { items });
+      };
+      const remote = ids.flatMap((id) => {
+        const it = get().data.items[id];
+        if (!it || (it.origin !== "capture" && it.origin !== "idea-lab")) return [];
+        return FIELD_NAMES.filter((name) => it.fields[name]?.state === "suggested").map((name) => [id, name] as const);
       });
-      const n = Object.keys(items).length;
-      if (n) commit(n === 1 ? "Rejected the suggestions" : `Rejected ${n} scraps`, { items });
+      if (remote.length) {
+        void Promise.all(remote.map(([id, name]) => syncReview(id, name, REJECTABLE_FIELDS.includes(name) ? "reject" : "confirm"))).then(apply).catch((error: unknown) => {
+          get().toast({ message: error instanceof Error ? `Couldn't sync these decisions: ${error.message}` : "Couldn't sync these decisions.", tone: "error" });
+        });
+      } else apply();
     },
 
     fileItems(ids, collectionId) {

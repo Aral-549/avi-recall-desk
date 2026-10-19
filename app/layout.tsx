@@ -1,6 +1,12 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
+import { Chakra_Petch, Figtree, Gochi_Hand, Unbounded } from 'next/font/google'
 import './globals.css'
+
+const interfaceFont = Figtree({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-interface' })
+const displayFont = Unbounded({ subsets: ['latin'], weight: ['400', '500', '700'], variable: '--font-display' })
+const labelFont = Chakra_Petch({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-label' })
+const handFont = Gochi_Hand({ subsets: ['latin'], weight: '400', variable: '--font-hand' })
 
 export const metadata: Metadata = {
   title: 'AVI — Recall Desk',
@@ -38,7 +44,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${interfaceFont.variable} ${displayFont.variable} ${labelFont.variable} ${handFont.variable}`}>
       <body className="antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}

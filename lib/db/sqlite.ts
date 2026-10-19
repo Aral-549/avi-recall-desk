@@ -186,8 +186,8 @@ export function getAppData(): AppData {
     item_id: string;
     name: string;
     value_json: string;
-    state: Field["state"];
-    by_: Field["by"];
+    state: Field<unknown>["state"];
+    by_: Field<unknown>["by"];
     model: string | null;
     confidence: number | null;
     at: string;
@@ -374,7 +374,7 @@ export function updateItemField(itemId: string, name: FieldName, field: Field<un
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
   try {
-    const prev = db.prepare("SELECT json FROM fields WHERE item_id = ? AND name = ? AND current = 1").get(itemId, name) as { json: string } | undefined;
+    const prev = db.prepare("SELECT value_json FROM fields WHERE item_id = ? AND name = ? AND current = 1").get(itemId, name) as { value_json: string } | undefined;
     db.prepare("UPDATE fields SET current = 0 WHERE item_id = ? AND name = ? AND current = 1").run(itemId, name);
     db.prepare(`
       INSERT INTO fields (
@@ -397,7 +397,7 @@ export function updateItemField(itemId: string, name: FieldName, field: Field<un
     `).run(
       itemId,
       name,
-      prev ? prev.json : null,
+      prev ? prev.value_json : null,
       JSON.stringify(field),
       new Date().toISOString(),
     );

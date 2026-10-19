@@ -82,7 +82,8 @@ export function buildSeed(): AppData {
     };
     if (s.confirmed) {
       for (const k of Object.keys(fields) as (keyof typeof fields)[]) {
-        (fields as Record<string, Field<unknown>>)[k] = { ...fields[k], state: "confirmed" };
+        const field = fields[k];
+        if (field) (fields as Record<string, Field<unknown>>)[k] = { ...field, state: "confirmed" };
       }
     }
     items[id] = {

@@ -70,7 +70,25 @@ function completeFields(item: Item, data: AppData): ItemFields {
   if (FIELD_NAMES.every((n) => item.fields[n])) return item.fields as ItemFields;
   let fallback: ItemFields;
   try {
-    fallback = categoriseSync({ id: item.id, url: item.url, rawContent: item.rawContent, whyISavedThis: item.whyISavedThis, attachment: item.attachment, collections: [] }, new Date(item.updatedAt)).fields;
+    const suggestion = categoriseSync(
+      {
+        id: item.id,
+        url: item.url,
+        title: item.title,
+        rawContent: [item.rawContent, item.whyISavedThis].filter(Boolean).join("\n\n"),
+        ...(item.attachment ? { attachment: { name: item.attachment.name, mime: item.attachment.mime } } : {}),
+      },
+      { collections: [] },
+      item.updatedAt,
+    ).fields;
+    fallback = {
+      type: { value: "note", state: "suggested", by: "rule", confidence: 0.3, at: item.updatedAt },
+      source: { value: "manual", state: "suggested", by: "rule", confidence: 0.3, at: item.updatedAt },
+      tags: { value: [], state: "suggested", by: "rule", confidence: 0.3, at: item.updatedAt },
+      oneLineSummary: { value: "Empty scrap.", state: "suggested", by: "rule", confidence: 0.3, at: item.updatedAt },
+      collection: { value: null, state: "suggested", by: "rule", confidence: 0.3, at: item.updatedAt },
+      ...suggestion,
+    } as ItemFields;
   } catch {
     const at = item.updatedAt;
     fallback = {
