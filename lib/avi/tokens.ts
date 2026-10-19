@@ -1,5 +1,5 @@
 /**
- * Design tokens, single source of truth. `globals.css` mirrors these as CSS variables;
+ * Design tokens, single source of truth. `recall-desk.css` mirrors these as CSS variables;
  * `toTokensStudio()` emits Tokens Studio (Figma) format.
  * Palette logic after Oryzo AI (one hot accent on a warm near-black); values are AVI's own.
  */

@@ -1,7 +1,7 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Cabin_Sketch, Cutive_Mono, Figtree, Reenie_Beanie } from 'next/font/google'
-import './globals.css'
+import './recall-desk.css'
 
 const interfaceFont = Figtree({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-interface' })
 const sketchDisplayFont = Cabin_Sketch({ subsets: ['latin'], weight: ['400', '700'], variable: '--font-sketch' })
