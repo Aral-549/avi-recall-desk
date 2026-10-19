@@ -10,13 +10,17 @@ import {
   ChevronRight,
   Clock3,
   Command,
+  Copy,
   ExternalLink,
   FileText,
   FolderOpen,
+  Keyboard,
   Link2,
   Plus,
   Search,
   Sparkles,
+  Upload,
+  PenTool,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
@@ -24,7 +28,7 @@ import { hasSuggestions, itemsOnPage, liveItems, useAvi } from '@/lib/avi/store'
 import { tagLabel, TAXONOMY } from '@/lib/avi/taxonomy'
 import { REJECTABLE_FIELDS, type FieldName, type Item, type ItemFields } from '@/lib/avi/types'
 
-type View = 'room' | 'review' | 'library'
+type View = 'room' | 'review' | 'library' | 'ask'
 
 const ALL_PAGE = 'all'
 const REVIEW_FIELDS: FieldName[] = ['tags', 'oneLineSummary', 'collection']
@@ -150,8 +154,12 @@ export default function Page() {
   const setPage = useAvi((state) => state.setPage)
   const select = useAvi((state) => state.select)
   const capture = useAvi((state) => state.capture)
+  const createCollection = useAvi((state) => state.createCollection)
   const editField = useAvi((state) => state.editField)
+  const acceptField = useAvi((state) => state.acceptField)
+  const acceptItems = useAvi((state) => state.acceptItems)
   const rejectField = useAvi((state) => state.rejectField)
+  const deleteItems = useAvi((state) => state.deleteItems)
   const dismissToast = useAvi((state) => state.dismissToast)
   const undo = useAvi((state) => state.undo)
 
@@ -164,11 +172,20 @@ export default function Page() {
   const [reviewId, setReviewId] = useState<string | null>(null)
   const [commandOpen, setCommandOpen] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [confirmedStamp, setConfirmedStamp] = useState<{ id: string; name?: string } | null>(null)
+  const [citationNotice, setCitationNotice] = useState('')
+  const [liveNotice, setLiveNotice] = useState('')
   const [saveText, setSaveText] = useState('')
   const [saveWhy, setSaveWhy] = useState('')
+  const [saveFiles, setSaveFiles] = useState<File[]>([])
+  const [newRoomName, setNewRoomName] = useState('')
+  const [askQuery, setAskQuery] = useState('')
   const [savedNotice, setSavedNotice] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
   const saveRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [sketchOpen, setSketchOpen] = useState(false)
   const choseDefaultRoom = useRef(false)
 
   useEffect(() => {
@@ -191,21 +208,6 @@ export default function Page() {
   useEffect(() => {
     if (saveOpen) saveRef.current?.focus()
   }, [saveOpen])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setCommandOpen(true)
-      }
-      if (event.key === 'Escape') {
-        setCommandOpen(false)
-        setSaveOpen(false)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
 
   const collections = data.collections
   const allItems = useMemo(() => liveItems(data).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [data])
@@ -232,30 +234,267 @@ export default function Page() {
   const selectedDetail = view === 'library'
     ? (selectedItem && filteredItems.some((item) => item.id === selectedItem.id) ? selectedItem : undefined)
     : selectedItem ?? (view === 'room' ? featured : undefined)
+  const askResults = useMemo(() => {
+    const query = askQuery.trim().toLowerCase()
+    if (!query) return []
+    return allItems.filter((item) => `${titleFor(item)} ${item.rawContent} ${item.whyISavedThis ?? ''} ${summaryFor(item)} ${(item.fields.tags?.value ?? []).join(' ')}`.toLowerCase().includes(query)).slice(0, 8)
+  }, [allItems, askQuery])
+
+  function formatCitation(item: Item): string {
+    const title = titleFor(item)
+    const url = item.url
+    const note = item.whyISavedThis || item.fields.oneLineSummary?.value || item.rawContent
+    if (url) {
+      if (note && note !== title) {
+        return `[${title}](${url})\n> "${note}"`
+      }
+      return `[${title}](${url})`
+    }
+    return `> "${note || title}"\n— ${title} (${relativeDate(item.createdAt)})`
+  }
+
+  async function copyCitation(item: Item) {
+    const citation = formatCitation(item)
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(citation)
+      } else if (typeof document !== 'undefined') {
+        const textarea = document.createElement('textarea')
+        textarea.value = citation
+        textarea.setAttribute('readonly', '')
+        textarea.style.position = 'absolute'
+        textarea.style.left = '-9999px'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      setCitationNotice(`Copied Markdown citation: ${titleFor(item)}`)
+      setLiveNotice(`Copied citation for ${titleFor(item)} to clipboard`)
+      window.setTimeout(() => setCitationNotice(''), 3000)
+    } catch {
+      setCitationNotice('Failed to copy citation')
+      window.setTimeout(() => setCitationNotice(''), 3000)
+    }
+  }
+
+  function triggerStamp(itemId: string, name?: string) {
+    setConfirmedStamp({ id: itemId, name })
+    window.setTimeout(() => {
+      setConfirmedStamp((prev) => (prev?.id === itemId && prev?.name === name ? null : prev))
+    }, 2200)
+  }
+
+  function confirmSuggestion(item: Item, name: FieldName) {
+    acceptField(item.id, name)
+    triggerStamp(item.id, name)
+    setLiveNotice(`Confirmed ${name === 'oneLineSummary' ? 'summary' : name === 'collection' ? 'room' : 'tags'} for ${titleFor(item)}`)
+  }
+
+  function handleReject(item: Item, name: FieldName) {
+    rejectField(item.id, name)
+    setLiveNotice(`Skipped ${name === 'oneLineSummary' ? 'summary' : name === 'collection' ? 'room' : 'tags'} for ${titleFor(item)}`)
+  }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const activeEl = document.activeElement
+      const isInput =
+        activeEl instanceof HTMLInputElement ||
+        activeEl instanceof HTMLTextAreaElement ||
+        activeEl instanceof HTMLSelectElement ||
+        Boolean(activeEl && (activeEl as HTMLElement).isContentEditable)
+
+      if (event.key === 'Escape') {
+        if (shortcutsOpen) {
+          event.preventDefault()
+          setShortcutsOpen(false)
+          return
+        }
+        if (commandOpen) {
+          event.preventDefault()
+          setCommandOpen(false)
+          return
+        }
+        if (saveOpen) {
+          event.preventDefault()
+          setSaveOpen(false)
+          return
+        }
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandOpen((prev) => !prev)
+        return
+      }
+
+      if (isInput) return
+
+      if (event.key === '?' || (event.shiftKey && event.key === '/')) {
+        event.preventDefault()
+        setShortcutsOpen((prev) => !prev)
+        return
+      }
+
+      if (event.key === '1') {
+        event.preventDefault()
+        setView('room')
+        return
+      }
+      if (event.key === '2') {
+        event.preventDefault()
+        setView('review')
+        if (reviewItems.length > 0 && !reviewId) setReviewId(reviewItems[0].id)
+        return
+      }
+      if (event.key === '3') {
+        event.preventDefault()
+        setView('library')
+        return
+      }
+      if (event.key === '4') {
+        event.preventDefault()
+        setView('ask')
+        return
+      }
+
+      if (event.key.toLowerCase() === 'c') {
+        const itemToCite = view === 'review' ? reviewItem : (selectedDetail ?? featured)
+        if (itemToCite) {
+          event.preventDefault()
+          void copyCitation(itemToCite)
+        }
+        return
+      }
+
+      if (event.key === 'j' || event.key === 'ArrowDown') {
+        event.preventDefault()
+        if (view === 'review') {
+          if (reviewItems.length === 0) return
+          const idx = reviewItems.findIndex((it) => it.id === reviewItem?.id)
+          const nextIdx = (idx + 1) % reviewItems.length
+          const nextItem = reviewItems[nextIdx]
+          if (nextItem) {
+            setReviewId(nextItem.id)
+            select(nextItem.id)
+            setLiveNotice(`Reviewing item ${nextIdx + 1} of ${reviewItems.length}: ${titleFor(nextItem)}`)
+          }
+        } else if (view === 'room') {
+          if (roomItems.length === 0) return
+          const idx = roomItems.findIndex((it) => it.id === selectedId)
+          const nextIdx = (idx + 1) % roomItems.length
+          const nextItem = roomItems[nextIdx]
+          if (nextItem) {
+            select(nextItem.id)
+            setLiveNotice(`Selected ${titleFor(nextItem)}`)
+          }
+        } else if (view === 'library') {
+          if (filteredItems.length === 0) return
+          const idx = filteredItems.findIndex((it) => it.id === selectedId)
+          const nextIdx = (idx + 1) % filteredItems.length
+          const nextItem = filteredItems[nextIdx]
+          if (nextItem) {
+            select(nextItem.id)
+            setLiveNotice(`Selected ${titleFor(nextItem)}`)
+          }
+        }
+        return
+      }
+
+      if (event.key === 'k' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (view === 'review') {
+          if (reviewItems.length === 0) return
+          const idx = reviewItems.findIndex((it) => it.id === reviewItem?.id)
+          const prevIdx = (idx - 1 + reviewItems.length) % reviewItems.length
+          const prevItem = reviewItems[prevIdx]
+          if (prevItem) {
+            setReviewId(prevItem.id)
+            select(prevItem.id)
+            setLiveNotice(`Reviewing item ${prevIdx + 1} of ${reviewItems.length}: ${titleFor(prevItem)}`)
+          }
+        } else if (view === 'room') {
+          if (roomItems.length === 0) return
+          const idx = roomItems.findIndex((it) => it.id === selectedId)
+          const prevIdx = (idx - 1 + roomItems.length) % roomItems.length
+          const prevItem = roomItems[prevIdx]
+          if (prevItem) {
+            select(prevItem.id)
+            setLiveNotice(`Selected ${titleFor(prevItem)}`)
+          }
+        } else if (view === 'library') {
+          if (filteredItems.length === 0) return
+          const idx = filteredItems.findIndex((it) => it.id === selectedId)
+          const prevIdx = (idx - 1 + filteredItems.length) % filteredItems.length
+          const prevItem = filteredItems[prevIdx]
+          if (prevItem) {
+            select(prevItem.id)
+            setLiveNotice(`Selected ${titleFor(prevItem)}`)
+          }
+        }
+        return
+      }
+
+      if (event.key.toLowerCase() === 'a' || event.key === 'Enter') {
+        if (view === 'review' && reviewItem) {
+          event.preventDefault()
+          const pendingField = REVIEW_FIELDS.find((name) => reviewItem.fields[name]?.state === 'suggested')
+          if (pendingField) {
+            confirmSuggestion(reviewItem, pendingField)
+          }
+        }
+        return
+      }
+
+      if (event.key.toLowerCase() === 'x' || event.key === 'Delete') {
+        if (view === 'review' && reviewItem) {
+          event.preventDefault()
+          const rejectableField = REVIEW_FIELDS.find((name) => reviewItem.fields[name]?.state === 'suggested' && REJECTABLE_FIELDS.includes(name))
+          if (rejectableField) {
+            handleReject(reviewItem, rejectableField)
+          }
+        }
+        return
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [view, reviewItem, reviewItems, roomItems, filteredItems, selectedId, selectedDetail, featured, shortcutsOpen, commandOpen, saveOpen, reviewId, select, acceptField, rejectField])
 
   function openLibraryFor(itemId?: string) {
     setView('library')
     if (itemId) select(itemId)
   }
 
-  function confirmSuggestion(item: Item, name: FieldName) {
-    const field = item.fields[name]
-    if (!field) return
-    if (name === 'tags') editField(item.id, 'tags', field.value as ItemFields['tags']['value'])
-    if (name === 'oneLineSummary') editField(item.id, 'oneLineSummary', field.value as string)
-    if (name === 'collection') editField(item.id, 'collection', field.value as string | null)
-  }
-
-  function submitSave(event: FormEvent<HTMLFormElement>) {
+  async function submitSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const cleanText = saveText.trim()
-    if (!cleanText) return
-    void capture({ text: cleanText, why: saveWhy.trim() })
-    setSavedNotice('Saved to this room')
-    setSaveText('')
-    setSaveWhy('')
-    setSaveOpen(false)
-    window.setTimeout(() => setSavedNotice(''), 3200)
+    if (!cleanText && saveFiles.length === 0) return
+    try {
+      const ids = await capture({ text: cleanText, files: saveFiles, why: saveWhy.trim() })
+      if (ids.length === 0) return
+      setSavedNotice(ids.length === 1 ? 'Pinned to the sketchbook' : `${ids.length} scraps pinned to the sketchbook`)
+      setSaveText('')
+      setSaveWhy('')
+      setSaveFiles([])
+      if (fileRef.current) fileRef.current.value = ''
+      setSaveOpen(false)
+      window.setTimeout(() => setSavedNotice(''), 3200)
+    } catch {
+      setSavedNotice('Could not save that scrap. Your archive is unchanged.')
+      window.setTimeout(() => setSavedNotice(''), 3200)
+    }
+  }
+
+  function submitRoom(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const id = createCollection(newRoomName)
+    if (id) {
+      setPage(id)
+      setNewRoomName('')
+    }
   }
 
   function chooseCommandResult(item: Item) {
@@ -282,8 +521,12 @@ export default function Page() {
             Review{reviewItems.length > 0 && <span className="nav-count">{reviewItems.length}</span>}
           </button>
           <button className={view === 'library' ? 'nav-link active' : 'nav-link'} type="button" onClick={() => setView('library')} aria-current={view === 'library' ? 'page' : undefined}>Library</button>
+          <button className={view === 'ask' ? 'nav-link active' : 'nav-link'} type="button" onClick={() => setView('ask')} aria-current={view === 'ask' ? 'page' : undefined}>Ask</button>
         </nav>
         <div className="topbar-actions">
+          <button className="shortcuts-trigger" type="button" onClick={() => setShortcutsOpen(true)} aria-label="Keyboard shortcuts, press question mark">
+            <Keyboard size={15} aria-hidden="true" /><span>Keys</span><kbd>?</kbd>
+          </button>
           <button className="search-trigger" type="button" onClick={() => setCommandOpen(true)} aria-label="Search AVI, control K">
             <Search size={16} aria-hidden="true" /><span>Search</span><kbd><Command size={11} aria-hidden="true" /> K</kbd>
           </button>
@@ -307,6 +550,11 @@ export default function Page() {
               </button>
             )
           })}
+          <form className="room-create" onSubmit={submitRoom}>
+            <label className="sr-only" htmlFor="new-room-name">New room name</label>
+            <input id="new-room-name" value={newRoomName} onChange={(event) => setNewRoomName(event.target.value)} placeholder="New room name" maxLength={50} />
+            <button type="submit" aria-label="Create room" disabled={!newRoomName.trim()}><Plus size={14} aria-hidden="true" /> Add room</button>
+          </form>
           <div className="rail-footnote"><span className="local-indicator" />Saved on this device</div>
         </aside>
 
@@ -327,16 +575,31 @@ export default function Page() {
                 <>
                   <section className="recall-section" aria-labelledby="recall-heading">
                     <div className="section-label"><span className="signal-line" /><span>RELEVANT NOW</span><span className="section-note">From this room</span></div>
-                    <button className="recall-card" type="button" onClick={() => openLibraryFor(featured.id)}>
+                    <article className="recall-card">
                       <span className="recall-side-note">{typeMark(typeFor(featured))}<span>{relativeDate(featured.createdAt)}</span></span>
                       <span className="recall-main">
                         <span className="recall-context"><Sparkles size={14} aria-hidden="true" /> {featured.whyISavedThis ? `You saved this for: ${featured.whyISavedThis}` : `Filed under ${currentCollection?.name ?? 'All saves'}`}</span>
-                        <strong id="recall-heading">{titleFor(featured)}</strong>
+                        <button className="recall-item-title" id="recall-heading" type="button" onClick={() => openLibraryFor(featured.id)}>{titleFor(featured)}</button>
                         <span className="recall-summary">{summaryFor(featured)}</span>
-                        <span className="recall-footer"><span>{sourceFor(featured)}</span>{featured.url && <span className="recall-domain">{domainFor(featured.url)}</span>}<span className="recall-open">View in library <ArrowUpRight size={14} aria-hidden="true" /></span></span>
+                        <span className="recall-footer">
+                          <span>{sourceFor(featured)}</span>
+                          {featured.url && <span className="recall-domain">{domainFor(featured.url)}</span>}
+                          <button
+                            className="citation-btn"
+                            type="button"
+                            onClick={(e) => {
+                              void copyCitation(featured)
+                            }}
+                            aria-label="Copy citation as Markdown"
+                          >
+                            <Copy size={12} aria-hidden="true" />
+                            <span>Copy citation</span>
+                          </button>
+                          <button className="recall-open" type="button" onClick={() => openLibraryFor(featured.id)}>View in library <ArrowUpRight size={14} aria-hidden="true" /></button>
+                        </span>
                       </span>
                       <span className="recall-stamp" aria-hidden="true"><Bookmark size={20} strokeWidth={1.5} /><span>KEPT<br />FOR LATER</span></span>
-                    </button>
+                    </article>
                   </section>
 
                   <div className="room-lower-grid">
@@ -379,7 +642,19 @@ export default function Page() {
                     ))}
                   </aside>
                   <article className="review-card">
-                    <div className="review-card-top"><span className="ai-badge"><Sparkles size={12} aria-hidden="true" /> AI-SUGGESTED</span><span className="review-item-date"><Clock3 size={13} aria-hidden="true" />{relativeDate(reviewItem.createdAt)}</span></div>
+                    <div className="review-card-top">
+                      <span className="ai-badge"><Sparkles size={12} aria-hidden="true" /> AI-SUGGESTED</span>
+                      <button
+                        className="citation-btn"
+                        type="button"
+                        onClick={() => void copyCitation(reviewItem)}
+                        aria-label="Copy citation as Markdown"
+                      >
+                        <Copy size={12} aria-hidden="true" />
+                        <span>Copy citation</span>
+                      </button>
+                      <span className="review-item-date"><Clock3 size={13} aria-hidden="true" />{relativeDate(reviewItem.createdAt)}</span>
+                    </div>
                     <div className="review-item-intro"><span className="item-mark large-mark" aria-hidden="true">{typeMark(typeFor(reviewItem))}</span><div><h2>{titleFor(reviewItem)}</h2><p>{summaryFor(reviewItem)}</p></div></div>
                     {reviewItem.url && <a className="source-url" href={reviewItem.url} target="_blank" rel="noreferrer"><Link2 size={14} aria-hidden="true" />{reviewItem.url}<ExternalLink size={13} aria-hidden="true" /></a>}
                     {reviewItem.whyISavedThis && <div className="saved-context"><span>YOUR NOTE</span><p>{reviewItem.whyISavedThis}</p></div>}
@@ -395,15 +670,19 @@ export default function Page() {
                             <div className="suggestion-field-head"><span>{name === 'oneLineSummary' ? 'Summary' : name === 'collection' ? 'Room' : 'Tags'}</span><span>{provenanceLabel(reviewItem, name)}</span></div>
                             <div className="suggestion-field-value"><FieldValue item={reviewItem} name={name} collections={collections} /></div>
                             <div className="suggestion-actions">
-                              <button className="accept-action" type="button" onClick={() => confirmSuggestion(reviewItem, name)}><Check size={14} aria-hidden="true" />Keep suggestion</button>
-                              {canReject && <button className="reject-action" type="button" onClick={() => rejectField(reviewItem.id, name)}><X size={14} aria-hidden="true" />Skip</button>}
+                              <button className="accept-action" type="button" onClick={() => confirmSuggestion(reviewItem, name)}><Check size={14} aria-hidden="true" />Keep suggestion <kbd>A</kbd></button>
+                              {canReject && <button className="reject-action" type="button" onClick={() => handleReject(reviewItem, name)}><X size={14} aria-hidden="true" />Skip <kbd>X</kbd></button>}
+                              {confirmedStamp?.id === reviewItem.id && confirmedStamp?.name === name && (
+                                <span className="confirmed-stamp" role="status"><Check size={11} aria-hidden="true" />CONFIRMED</span>
+                              )}
                             </div>
                           </div>
                         )
                       })}
-                      {REVIEW_FIELDS.every((name) => reviewItem.fields[name]?.state !== 'suggested') && <div className="review-done"><Check size={17} aria-hidden="true" /><span>Nothing left to review for this save.</span></div>}
+                      {REVIEW_FIELDS.every((name) => reviewItem.fields[name]?.state !== 'suggested') && <div className="review-done"><Check size={17} aria-hidden="true" /><span>Nothing left to review for this save.</span><span className="confirmed-stamp" role="status">READY</span></div>}
                     </div>
                     <div className="review-card-foot"><span><Bookmark size={13} aria-hidden="true" /> Your saved content stays yours.</span><div className="review-stepper"><button type="button" onClick={() => { const index = reviewItems.findIndex((item) => item.id === reviewItem.id); setReviewId(reviewItems[(index - 1 + reviewItems.length) % reviewItems.length]?.id ?? null) }} aria-label="Previous review item"><ChevronLeft size={16} /></button><span>{String(reviewItems.findIndex((item) => item.id === reviewItem.id) + 1).padStart(2, '0')} / {String(reviewItems.length).padStart(2, '0')}</span><button type="button" onClick={() => { const index = reviewItems.findIndex((item) => item.id === reviewItem.id); setReviewId(reviewItems[(index + 1) % reviewItems.length]?.id ?? null) }} aria-label="Next review item"><ChevronRight size={16} /></button></div></div>
+                    <button className="stamp-study" type="button" onClick={() => acceptItems([reviewItem.id])}><Check size={15} aria-hidden="true" /> Stamp this study</button>
                   </article>
                 </div>
               ) : <EmptyState title="Nothing waiting for review" text="Your saved items are already filed. New suggestions will show up here when they are ready." action="Back to room" onAction={() => setView('room')} />}
@@ -441,27 +720,178 @@ export default function Page() {
                     <div className="detail-field"><span>KEPT</span><strong>{relativeDate(selectedDetail.createdAt)}</strong></div>
                     <div className="detail-field detail-tags"><span>TAGS</span><FieldValue item={selectedDetail} name="tags" collections={collections} /></div>
                     {selectedDetail.whyISavedThis && <div className="detail-why"><span>WHY YOU KEPT IT</span><p>{selectedDetail.whyISavedThis}</p></div>}
+                    <div className="detail-actions">
+                      <button
+                        className="citation-btn"
+                        type="button"
+                        onClick={() => void copyCitation(selectedDetail)}
+                        aria-label="Copy Markdown citation"
+                      >
+                        <Copy size={13} aria-hidden="true" />
+                        <span>Copy Markdown citation</span>
+                      </button>
+                      <button className="tear-action" type="button" onClick={() => { deleteItems([selectedDetail.id]); select(null) }}>Tear this scrap out</button>
+                    </div>
                     {hasSuggestions(selectedDetail) && <button className="detail-review" type="button" onClick={() => { setReviewId(selectedDetail.id); setView('review') }}>Review suggestions <ArrowUpRight size={14} aria-hidden="true" /></button>}
                   </> : <div className="detail-placeholder"><FolderOpen size={22} strokeWidth={1.4} aria-hidden="true" /><span>Choose a save to see its context.</span></div>}
                 </aside>
               </div>
             </div>
           )}
+
+          {view === 'ask' && (
+            <div className="view-content ask-view">
+              <div className="view-kicker"><span>ASK THE ARCHIVE</span><span className="kicker-rule" /><span>Search your saved context</span></div>
+              <div className="ask-heading"><div><h1>What were you keeping?</h1><p className="lede">Look through titles, notes, summaries, and tags in your local archive.</p></div><span className="sample-flag">Archive search</span></div>
+              <label className="ask-search"><Search size={20} aria-hidden="true" /><span className="sr-only">Search your archive</span><input value={askQuery} onChange={(event) => setAskQuery(event.target.value)} placeholder="Try a phrase you remember…" /></label>
+              {askQuery.trim() ? (
+                <section className="ask-results" aria-live="polite" aria-label="Archive search results">
+                  <div className="section-label plain">{askResults.length} {askResults.length === 1 ? 'SCRAP' : 'SCRAPS'} FOUND</div>
+                  {askResults.length ? askResults.map((item) => <ItemRow key={item.id} item={item} selected={selectedId === item.id} collections={collections} onSelect={() => openLibraryFor(item.id)} />) : <p className="inline-empty">No saved scrap matches that phrase. Try a tag or the note you wrote when saving it.</p>}
+                </section>
+              ) : (
+                <div className="ask-prompts">
+                  <span className="section-label plain">START WITH A QUESTION</span>
+                  {[
+                    ['What did I save about design?', 'design'],
+                    ['Find notes I kept for this project', 'project'],
+                    ['Show my recent sketches', 'sketch'],
+                  ].map(([prompt, query]) => <button className="ask-prompt" type="button" key={prompt} onClick={() => setAskQuery(query)}><Search size={14} aria-hidden="true" />{prompt}<ArrowUpRight size={14} aria-hidden="true" /></button>)}
+                </div>
+              )}
+            </div>
+          )}
         </section>
       </div>
 
-      <footer className="app-footer"><span>AVI <span className="brand-period">/</span> a memory for the things you keep</span><button type="button" onClick={undo}>Undo last change</button></footer>
+      <footer className="app-footer">
+        <span>AVI <span className="brand-period">/</span> a memory for the things you keep</span>
+        <div className="footer-actions">
+          <button type="button" onClick={() => setShortcutsOpen(true)}>Shortcuts <kbd>?</kbd></button>
+          <span className="footer-sep" aria-hidden="true">·</span>
+          <button type="button" onClick={undo}>Undo last change</button>
+        </div>
+      </footer>
 
+      <div className="sr-only" role="status" aria-live="polite">{liveNotice}</div>
+      {citationNotice && <div className="saved-toast" role="status"><Check size={15} aria-hidden="true" />{citationNotice}</div>}
       {savedNotice && <div className="saved-toast" role="status"><Check size={15} aria-hidden="true" />{savedNotice}</div>}
       {toasts.map((toast) => <div className={`avi-toast ${toast.tone}`} role="status" key={toast.id}><span>{toast.message}</span>{toast.action && <button type="button" onClick={toast.action.run}>{toast.action.label}</button>}<button type="button" className="toast-close" onClick={() => dismissToast(toast.id)} aria-label="Dismiss notification"><X size={14} /></button></div>)}
 
+      {shortcutsOpen && (
+        <div className="modal-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShortcutsOpen(false) }}>
+          <section className="shortcuts-dialog" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+            <div className="shortcuts-head">
+              <span id="shortcuts-title"><Keyboard size={18} aria-hidden="true" /> Desk shortcuts</span>
+              <button type="button" onClick={() => setShortcutsOpen(false)} aria-label="Close shortcuts modal"><X size={16} /></button>
+            </div>
+            <p className="shortcuts-lede">Fast single-verb triage and review. No mouse needed.</p>
+            <div className="shortcuts-grid">
+              <div className="shortcuts-col">
+                <span className="shortcuts-col-title">Triage & Review</span>
+                <div className="shortcut-row">
+                  <span>Next item</span>
+                  <div className="shortcut-keys"><kbd>J</kbd> <span>or</span> <kbd>↓</kbd></div>
+                </div>
+                <div className="shortcut-row">
+                  <span>Previous item</span>
+                  <div className="shortcut-keys"><kbd>K</kbd> <span>or</span> <kbd>↑</kbd></div>
+                </div>
+                <div className="shortcut-row">
+                  <span>Keep suggestion</span>
+                  <div className="shortcut-keys"><kbd>A</kbd> <span>or</span> <kbd>↵</kbd></div>
+                </div>
+                <div className="shortcut-row">
+                  <span>Skip suggestion</span>
+                  <div className="shortcut-keys"><kbd>X</kbd></div>
+                </div>
+              </div>
+              <div className="shortcuts-col">
+                <span className="shortcuts-col-title">Desk & Navigation</span>
+                <div className="shortcut-row">
+                  <span>Copy Markdown citation</span>
+                  <div className="shortcut-keys"><kbd>C</kbd></div>
+                </div>
+                <div className="shortcut-row">
+                  <span>Switch view (1 / 2 / 3 / 4)</span>
+                  <div className="shortcut-keys"><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></div>
+                </div>
+                <div className="shortcut-row">
+                  <span>Quick search</span>
+                  <div className="shortcut-keys"><kbd>Ctrl</kbd> <kbd>K</kbd></div>
+                </div>
+                <div className="shortcut-row">
+                  <span>Toggle shortcuts</span>
+                  <div className="shortcut-keys"><kbd>?</kbd></div>
+                </div>
+                <div className="shortcut-row">
+                  <span>Close dialog</span>
+                  <div className="shortcut-keys"><kbd>Esc</kbd></div>
+                </div>
+              </div>
+            </div>
+            <div className="shortcuts-foot">
+              <span>Keystrokes are ignored when typing in search or notes.</span>
+              <button className="quiet-button" type="button" onClick={() => setShortcutsOpen(false)}>Done</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {commandOpen && <div className="modal-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCommandOpen(false) }}><section className="command-dialog" role="dialog" aria-modal="true" aria-labelledby="command-title"><div className="command-head"><span id="command-title">Find something you kept</span><button type="button" onClick={() => setCommandOpen(false)} aria-label="Close search"><X size={16} /></button></div><label className="command-input"><Search size={17} aria-hidden="true" /><span className="sr-only">Search saved items</span><input ref={searchRef} onChange={(event) => setLibraryQuery(event.target.value)} value={libraryQuery} placeholder="A title, a thought, a place…" /></label><div className="command-results">{allItems.filter((item) => `${titleFor(item)} ${item.rawContent} ${item.url ?? ''} ${item.whyISavedThis ?? ''}`.toLowerCase().includes(libraryQuery.toLowerCase())).slice(0, 6).map((item) => <button type="button" key={item.id} onClick={() => chooseCommandResult(item)}><span className="item-mark" aria-hidden="true">{typeMark(typeFor(item))}</span><span><strong>{titleFor(item)}</strong><small>{summaryFor(item)}</small></span><ArrowUpRight size={14} aria-hidden="true" /></button>)}{!allItems.some((item) => `${titleFor(item)} ${item.rawContent} ${item.url ?? ''} ${item.whyISavedThis ?? ''}`.toLowerCase().includes(libraryQuery.toLowerCase())) && <p className="command-empty">No saved items found. Try another phrase.</p>}</div><div className="command-foot"><span><kbd>ESC</kbd> close</span><span><kbd>TAB</kbd> move through results</span></div></section></div>}
 
-      {saveOpen && <div className="modal-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSaveOpen(false) }}><section className="save-dialog" role="dialog" aria-modal="true" aria-labelledby="save-title"><div className="dialog-topline"><span>NEW SAVE</span><button type="button" onClick={() => setSaveOpen(false)} aria-label="Close save dialog"><X size={17} /></button></div><h2 id="save-title">Keep it with the work.</h2><p className="dialog-copy">Paste a link or leave yourself a note. AVI will file it in {currentCollection?.name ?? 'All saves'}.</p><form onSubmit={submitSave}><label className="save-label" htmlFor="save-content">Link or note</label><textarea ref={saveRef} id="save-content" value={saveText} onChange={(event) => setSaveText(event.target.value)} placeholder="Paste a link, quote, or thought…" rows={4} required /><label className="save-label" htmlFor="save-why">Why are you keeping it? <span>Optional</span></label><input id="save-why" value={saveWhy} onChange={(event) => setSaveWhy(event.target.value)} placeholder="The small thing you’ll forget later" /><div className="dialog-actions"><button className="quiet-button" type="button" onClick={() => setSaveOpen(false)}>Cancel</button><button className="save-button" type="submit"><Plus size={15} aria-hidden="true" />Save to room</button></div></form></section></div>}
+      {saveOpen && <div className="modal-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSaveOpen(false) }}><section className="save-dialog sketch-paper" role="dialog" aria-modal="true" aria-labelledby="save-title"><div className="dialog-topline"><span>NEW SCRAP / {currentCollection?.name ?? 'ALL SAVES'}</span><button type="button" onClick={() => setSaveOpen(false)} aria-label="Close save dialog"><X size={17} /></button></div><h2 id="save-title">Pin something worth keeping.</h2><p className="dialog-copy">Save a link, a note, or a piece of work. AVI keeps it with your room.</p><form onSubmit={submitSave}><label className="save-label" htmlFor="save-content">Link or note</label><textarea ref={saveRef} id="save-content" value={saveText} onChange={(event) => setSaveText(event.target.value)} placeholder="Paste a link, quote, or thought…" rows={3} /><label className="save-label" htmlFor="save-why">Margin note <span>Why are you keeping it?</span></label><input id="save-why" value={saveWhy} onChange={(event) => setSaveWhy(event.target.value)} placeholder="The small thing you’ll forget later" /><div className="capture-tools"><input ref={fileRef} type="file" multiple accept="image/*,video/*,audio/*,.pdf,.txt,.md,.zip,.csv,.json" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); if (selected.length) setSaveFiles((files) => [...files, ...selected]); event.currentTarget.value = '' }} aria-label="Choose image, video, audio, or document files" /><button className="quiet-button" type="button" onClick={() => fileRef.current?.click()}><Upload size={14} aria-hidden="true" /> Add files</button><button className="quiet-button" type="button" onClick={() => setSketchOpen((open) => !open)}><PenTool size={14} aria-hidden="true" /> {sketchOpen ? 'Close sketchpad' : 'Draw a scrap'}</button></div>{saveFiles.length > 0 && <p className="file-count">{saveFiles.length} {saveFiles.length === 1 ? 'file' : 'files'} ready: {saveFiles.map((file) => file.name).join(', ')}</p>}{sketchOpen && <SketchPadCapture onSave={(file) => setSaveFiles((files) => [...files, file])} />}<div className="dialog-actions"><button className="quiet-button" type="button" onClick={() => setSaveOpen(false)}>Cancel</button><button className="save-button" type="submit" disabled={!saveText.trim() && saveFiles.length === 0}><Plus size={15} aria-hidden="true" />Pin to room</button></div></form></section></div>}
     </main>
   )
 }
 
 function EmptyState({ title, text, action, onAction }: { title: string; text: string; action: string; onAction: () => void }) {
   return <div className="empty-state"><div className="empty-mark" aria-hidden="true"><FileText size={20} strokeWidth={1.4} /></div><h2>{title}</h2><p>{text}</p><button type="button" onClick={onAction}>{action}<ArrowUpRight size={14} aria-hidden="true" /></button></div>
+}
+
+function SketchPadCapture({ onSave }: { onSave: (file: File) => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const drawingRef = useRef(false)
+  const [hasInk, setHasInk] = useState(false)
+
+  function point(event: React.PointerEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    return { x: ((event.clientX - rect.left) / rect.width) * canvas.width, y: ((event.clientY - rect.top) / rect.height) * canvas.height }
+  }
+
+  function start(event: React.PointerEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current
+    const at = point(event)
+    const ctx = canvas?.getContext('2d')
+    if (!canvas || !ctx || !at) return
+    drawingRef.current = true
+    setHasInk(true)
+    canvas.setPointerCapture(event.pointerId)
+    ctx.beginPath()
+    ctx.moveTo(at.x, at.y)
+  }
+
+  function move(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (!drawingRef.current) return
+    const ctx = canvasRef.current?.getContext('2d')
+    const at = point(event)
+    if (!ctx || !at) return
+    ctx.strokeStyle = '#282925'
+    ctx.lineWidth = 3
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.lineTo(at.x, at.y)
+    ctx.stroke()
+  }
+
+  async function saveSketch() {
+    const canvas = canvasRef.current
+    if (!canvas || !hasInk) return
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    if (blob && blob.size > 120) onSave(new File([blob], `avi-sketch-${Date.now()}.png`, { type: 'image/png' }))
+  }
+
+  return <div className="sketchpad-wrap"><span className="save-label">Pencil study</span><canvas ref={canvasRef} width={900} height={300} aria-label="Draw a sketch to save into AVI" onPointerDown={start} onPointerMove={move} onPointerUp={() => { drawingRef.current = false }} onPointerCancel={() => { drawingRef.current = false }} /><div className="sketchpad-actions"><button type="button" onClick={() => { const ctx = canvasRef.current?.getContext('2d'); if (ctx) ctx.clearRect(0, 0, 900, 300); setHasInk(false) }}>Clear page</button><button type="button" onClick={() => void saveSketch()} disabled={!hasInk}>Add sketch to scrap</button></div></div>
 }
